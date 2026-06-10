@@ -15,43 +15,22 @@ export default function ChatPage() {
   useEffect(() => {
     if (!sessionId) return;
 
-    const client = getClient();
-    const settings = client.getSettings();
-    const apiUrl = settings.apiUrl as string;
-    const tenantId = settings.tenantId as string;
+    // connectEvents handles auth, SSE setup, and reconnects.
+    const disconnect = getClient().connectEvents(({ type, data }) => {
+      if (type !== 'breadcrumb') return;
+      const event = data as any;
+      const tags: string[] = event.tags || [];
+      if (!tags.includes(`session:${sessionId}`)) return;
+      if (tags.includes('llm-section:conversation') && event.created_by?.type !== 'user') {
+        addMessage({
+          role: 'assistant',
+          content: event.content?.content || event.content?.message || event.title || '',
+          id: event.breadcrumb_id || event.id,
+        });
+      }
+    });
 
-    const buildEventSource = async () => {
-      const adapter = (client as any).adapter;
-      const token = await adapter?.getToken?.();
-      if (!token) return null;
-
-      const params = new URLSearchParams();
-      params.set('token', token);
-      if (tenantId) params.set('tenant_id', tenantId);
-
-      const es = new EventSource(`${apiUrl}/v1/events?${params}`);
-      es.addEventListener('breadcrumb', (e: MessageEvent) => {
-        try {
-          const event = JSON.parse(e.data);
-          const tags = event.tags || [];
-          if (tags.some((t: string) => t === `session:${sessionId}`)) {
-            if (tags.includes('llm-section:conversation') && event.created_by?.type !== 'user') {
-              addMessage({
-                role: 'assistant',
-                content: event.content?.content || event.content?.message || event.title || '',
-                id: event.breadcrumb_id,
-              });
-            }
-          }
-        } catch {}
-      });
-      return es;
-    };
-
-    let es: EventSource | null = null;
-    buildEventSource().then((source) => { es = source; });
-
-    return () => { es?.close(); };
+    return disconnect;
   }, [sessionId]);
 
   useEffect(() => {
@@ -102,9 +81,11 @@ export default function ChatPage() {
               {msg.role === 'user' ? (
                 <p>{msg.content}</p>
               ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-sm dark:prose-invert max-w-none">
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {msg.content}
                 </ReactMarkdown>
+                </div>
               )}
             </div>
           </div>
